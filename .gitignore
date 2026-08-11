@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Database (local runtime data, not source code)
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated reports (regenerated on each run)
+reports/*.html
+
+# Raw data cache
+data/raw/
+data/parquet/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

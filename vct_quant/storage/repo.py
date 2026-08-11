@@ -1,0 +1,152 @@
+"""vct_quant.storage.repo — CRUD 仓储。所有写入走 upsert，保证可重入。"""
+from __future__ import annotations
+
+import sqlite3
+import uuid
+from datetime import datetime
+
+from . import db as dbmod
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def upsert_match(conn, m: dict) -> None:
+    conn.execute(
+        """INSERT INTO matches(id,event,date,team_a,team_b,score_a,score_b,url,fetched_at)
+           VALUES (:id,:event,:date,:team_a,:team_b,:score_a,:score_b,:url,:fetched_at)
+           ON CONFLICT(id) DO UPDATE SET
+             event=excluded.event, date=excluded.date, team_a=excluded.team_a,
+             team_b=excluded.team_b, score_a=excluded.score_a, score_b=excluded.score_b,
+             url=excluded.url, fetched_at=excluded.fetched_at""",
+        {**m, "fetched_at": _now()},
+    )
+
+
+def upsert_map(conn, mp: dict) -> None:
+    conn.execute(
+        """INSERT INTO maps(id,match_id,map_name,team_a_score,team_b_score,winner,duration_sec,site)
+           VALUES (:id,:match_id,:map_name,:team_a_score,:team_b_score,:winner,:duration_sec,:site)
+           ON CONFLICT(id) DO UPDATE SET
+             match_id=excluded.match_id, map_name=excluded.map_name,
+             team_a_score=excluded.team_a_score, team_b_score=excluded.team_b_score,
+             winner=excluded.winner, duration_sec=excluded.duration_sec, site=excluded.site""",
+        mp,
+    )
+
+
+def upsert_player_stats(conn, ps: dict) -> None:
+    # 稳定 id：同一选手同一图只保留一行，保证可重入去重
+    ps = {**ps, "id": ps.get("id") or f"{ps['map_id']}|{ps['player_name']}"}
+    conn.execute(
+        """INSERT INTO player_stats
+             (id,map_id,match_id,player_name,team,agent,acs,kills,deaths,assists,
+              kast,fk,fd,adr,hs_pct)
+           VALUES
+             (:id,:map_id,:match_id,:player_name,:team,:agent,:acs,:kills,:deaths,:assists,
+              :kast,:fk,:fd,:adr,:hs_pct)
+           ON CONFLICT(id) DO UPDATE SET
+             acs=excluded.acs, kills=excluded.kills, deaths=excluded.deaths,
+             assists=excluded.assists, kast=excluded.kast, fk=excluded.fk, fd=excluded.fd,
+             adr=excluded.adr, hs_pct=excluded.hs_pct""",
+        ps,
+    )
+
+
+def upsert_post(conn, p: dict) -> None:
+    conn.execute(
+        """INSERT INTO posts(id,source,thread_id,author,content,post_time,reply_count,fetched_at)
+           VALUES (:id,:source,:thread_id,:author,:content,:post_time,:reply_count,:fetched_at)
+           ON CONFLICT(id) DO UPDATE SET
+             content=excluded.content, post_time=excluded.post_time,
+             reply_count=excluded.reply_count, fetched_at=excluded.fetched_at""",
+        {**p, "fetched_at": _now()},
+    )
+
+
+def upsert_sentiment(conn, s: dict) -> None:
+    s = {**s, "id": s.get("id") or str(uuid.uuid4()), "created_at": _now()}
+    conn.execute(
+        """INSERT INTO sentiments
+             (id,post_id,player_name,team,sentiment_score,bullish_score,confidence,method,created_at)
+           VALUES
+             (:id,:post_id,:player_name,:team,:sentiment_score,:bullish_score,
+              :confidence,:method,:created_at)
+           ON CONFLICT(id) DO UPDATE SET
+             sentiment_score=excluded.sentiment_score, bullish_score=excluded.bullish_score,
+             confidence=excluded.confidence, method=excluded.method""",
+        s,
+    )
+
+
+def upsert_rating(conn, r: dict) -> None:
+    conn.execute(
+        """INSERT INTO player_ratings(player_name,rating,rd,vol,updated_at)
+           VALUES (:player_name,:rating,:rd,:vol,:updated_at)
+           ON CONFLICT(player_name) DO UPDATE SET
+             rating=excluded.rating, rd=excluded.rd, vol=excluded.vol,
+             updated_at=excluded.updated_at""",
+        {**r, "updated_at": _now()},
+    )
+
+
+def upsert_signal(conn, s: dict) -> None:
+    s = {**s, "created_at": _now()}
+    conn.execute(
+        """INSERT INTO value_signals
+             (date,player_name,v_star,p_market,delta,signal,position,rationale,created_at)
+           VALUES
+             (:date,:player_name,:v_star,:p_market,:delta,:signal,:position,:rationale,:created_at)
+           ON CONFLICT(date, player_name) DO UPDATE SET
+             v_star=excluded.v_star, p_market=excluded.p_market, delta=excluded.delta,
+             signal=excluded.signal, position=excluded.position, rationale=excluded.rationale,
+             created_at=excluded.created_at""",
+        s,
+    )
+
+
+def get_player_stats_window(conn, player_name: str, limit: int = 50):
+    return conn.execute(
+        """SELECT * FROM player_stats WHERE player_name=? ORDER BY rowid DESC LIMIT ?""",
+        (player_name, limit),
+    ).fetchall()
+
+
+def get_recent_sentiments(conn, player_name: str, days: int = 30):
+    return conn.execute(
+        """SELECT * FROM sentiments WHERE player_name=?
+             AND created_at >= datetime('now', ?) ORDER BY created_at DESC""",
+        (player_name, f"-{days} days"),
+    ).fetchall()
+
+
+def get_all_players(conn):
+    return [r["player_name"] for r in conn.execute(
+        "SELECT DISTINCT player_name FROM player_stats ORDER BY player_name"
+    ).fetchall()]
+
+
+def get_ratings(conn):
+    return {r["player_name"]: dict(r) for r in conn.execute(
+        "SELECT * FROM player_ratings"
+    ).fetchall()}
+
+
+def get_signals_by_date(conn, date: str):
+    return conn.execute(
+        "SELECT * FROM value_signals WHERE date=? ORDER BY ABS(delta) DESC", (date,)
+    ).fetchall()
+
+
+def count_rows(conn, table: str) -> int:
+    return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
+def reset_all(conn) -> None:
+    """清空全部业务表（研究管线重跑前调用，保证可重入）。"""
+    for t in ("value_signals", "player_ratings", "sentiments", "posts",
+              "player_stats", "maps", "matches"):
+        conn.execute(f"DELETE FROM {t}")
+    conn.commit()
+
