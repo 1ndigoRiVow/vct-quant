@@ -72,6 +72,13 @@ SENTIMENT_LLM_MODEL = os.environ.get("VQ_LLM_MODEL", "gpt-4o-mini")
 BACKTEST_START_DATE = "2024-01-01"
 WALKFORWARD_TRAIN_DAYS = 90
 
+# === 比赛模拟器（赛前胜率预测 p̂，FPS 回合制蒙特卡洛）===
+# 队伍实力(Glicko-2 均值 + 地图胜率修正) → logistic 单回合胜率 → 13 胜制模拟 → 蒙特卡洛
+SIM_LOGISTIC_SCALE = 90.0   # Glicko 分差 → 单回合胜率敏感度（差约 90 ≈ 单回合 ~62%）
+SIM_MAP_WEIGHT = 160.0      # 地图胜率修正强度：(该图历史胜率 - 0.5) * weight 加到实力
+SIM_MIN_MAP_SAMPLE = 2      # 地图修正所需最小历史场次
+SIM_N_SIMS = 2000           # 单场蒙特卡洛模拟次数
+
 # === 运行模式 ===
 # True = 离线用合成数据跑通全管线（默认）；False = 真实联网抓取
 OFFLINE_MODE = True

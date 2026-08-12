@@ -14,7 +14,8 @@ from .. import config
 def build_dashboard(signals: list[dict], portfolio: dict, backtest: dict,
                      db_summary: dict, out_path: Path | None = None,
                      profiles: list[dict] | None = None,
-                     map_winrate: list[dict] | None = None) -> Path:
+                     map_winrate: list[dict] | None = None,
+                     calibration: dict | None = None) -> Path:
     profiles = profiles or []
     map_winrate = map_winrate or []
     n_signals = len(signals)
@@ -48,9 +49,26 @@ def build_dashboard(signals: list[dict], portfolio: dict, backtest: dict,
         for r in mw
     ], ensure_ascii=False)
 
+    # 比赛模拟器校准：每场 p̂(x) vs 实际结果(y，带确定性抖动避免重叠)
+    calib_pts = []
+    if calibration and calibration.get("details"):
+        for i, d in enumerate(calibration["details"]):
+            actual_a = 1 if d["actual_winner"] == d["team_a"] else 0
+            jitter = (((i * 37) % 10) - 4.5) / 60.0  # ±0.075 确定性抖动
+            calib_pts.append({
+                "x": d["p_win_a"], "y": actual_a + jitter,
+                "label": f'{d["team_a"]} vs {d["team_b"]}·{d["map"]}',
+                "actual": actual_a,
+            })
+    calib_data = json.dumps(calib_pts, ensure_ascii=False)
+    cal_acc = (calibration or {}).get("accuracy")
+    cal_brier = (calibration or {}).get("brier")
+    cal_acc_disp = f"{cal_acc:.1%}" if isinstance(cal_acc, (int, float)) else "—"
+    cal_brier_disp = f"{cal_brier:.3f}" if isinstance(cal_brier, (int, float)) else "—"
+
     gen = datetime.now().strftime("%Y-%m-%d %H:%M")
     html = _html(data, bars, n_signals, portfolio, backtest, db_summary, gen,
-                 role_data, top_perf, mapwr_data)
+                 role_data, top_perf, mapwr_data, calib_data, cal_acc_disp, cal_brier_disp)
     out = out_path or (Path(config.REPORT_DIR) / "dashboard.html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
@@ -61,10 +79,12 @@ ROLE_CN = {"duelist": "决斗", "initiator": "先锋", "controller": "控场", "
 
 
 def _html(points, bars, n_signals, portfolio, backtest, db_summary, gen,
-          role_data=None, top_perf=None, mapwr_data=None) -> str:
+          role_data=None, top_perf=None, mapwr_data=None,
+          calib_data=None, cal_acc="—", cal_brier="—") -> str:
     role_data = role_data or '{"labels":[],"values":[]}'
     top_perf = top_perf or "[]"
     mapwr_data = mapwr_data or "[]"
+    calib_data = calib_data or "[]"
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -101,13 +121,15 @@ def _html(points, bars, n_signals, portfolio, backtest, db_summary, gen,
     <div class="panel"><div class="sub">选手 ACS 排行（平均战斗评分 TOP15）</div><canvas id="perf"></canvas></div>
   </div>
   <div class="panel"><div class="sub">战队 × 地图 × 对手 胜率 TOP20</div><canvas id="mapwr"></canvas></div>
-  <footer>买入(看涨)=红 / 卖出(看跌)=绿，遵循 A 股惯例。</footer>
+  <div class="panel"><div class="sub">比赛模拟器校准 · 预测胜率 p̂ vs 实际结果（红=A胜 绿=A负）｜命中率 {cal_acc} · Brier {cal_brier}</div><canvas id="calib"></canvas></div>
+  <footer>买入(看涨)=红 / 卖出(看跌)=绿，遵循 A 股惯例。校准图为蒙特卡洛模拟器赛前胜率预测 p̂ 与实际胜负对照。</footer>
   <script>
   const pts = {points};
   const bars = {bars};
   const roleData = {role_data};
   const perf = {top_perf};
   const mapwr = {mapwr_data};
+  const calib = {calib_data};
   Chart.defaults.color = '#475569';
   const scatter = new Chart(document.getElementById('scatter'), {{
     type:'bubble',
@@ -134,6 +156,15 @@ def _html(points, bars, n_signals, portfolio, backtest, db_summary, gen,
     data:{{labels:mapwr.map(m=>m.label),datasets:[{{label:'胜率',data:mapwr.map(m=>m.wr),backgroundColor:mapwr.map(m=>m.wr>=0.5?'#dc2626':'#94a3b8')}}]}},
     options:{{indexAxis:'y',plugins:{{legend:{{display:false}}}},scales:{{x:{{min:0,max:1,title:{{display:true,text:'胜率'}}}}}}}}
   }});
+  if (calib.length) {{
+    new Chart(document.getElementById('calib'), {{
+      type:'scatter',
+      data:{{datasets:[{{label:'每场比赛',data:calib,backgroundColor:calib.map(c=>c.actual===1?'#dc2626':'#16a34a'),pointRadius:6}}]}},
+      options:{{plugins:{{tooltip:{{callbacks:{{label:function(c){{var p=c.raw;return p.label+'  p̂(A胜)='+p.x.toFixed(2);}}}}}},legend:{{display:false}}}},
+        scales:{{x:{{min:0,max:1,title:{{display:true,text:'预测 A 胜率 p̂'}}}},
+                 y:{{min:-0.2,max:1.2,ticks:{{callback:function(v){{return Math.abs(v-1)<0.01?'A胜':Math.abs(v)<0.01?'A负':'';}}}},title:{{display:true,text:'实际结果'}}}}}}}}
+    }});
+  }}
   </script>
 </body></html>"""
 

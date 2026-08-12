@@ -15,6 +15,7 @@ from .collectors.vlr_collector import VLRCollector
 from .features.sentiment_features import SentimentPipeline, player_sentiment_features
 from .models.backtest import walk_forward
 from .models.glicko2 import rate_all_players
+from .models.match_simulator import evaluate_calibration
 from .models.player_profile import build_all as build_player_data
 from .models.value_model import build_all_values
 from .reporting.dashboard import build_dashboard
@@ -48,6 +49,11 @@ def run_pipeline(n_matches: int = 24, n_posts: int = 80, backtest: bool = True):
     pdata = build_player_data(conn)
     print(f"[4.5/8] 选手画像 {pdata['profiles']} 名 | 战队映射 {pdata['player_teams']} | "
           f"地图胜率 {pdata['team_map_winrate']} 条")
+
+    # 3.6 比赛模拟器：赛前胜率预测 p̂ + 历史校准
+    calib = evaluate_calibration(conn, n_sims=400)
+    print(f"[4.6/8] 比赛模拟器校准: n={calib['n_matches']} 场 | "
+          f"Brier={calib['brier']} LogLoss={calib['logloss']} 命中率={calib['accuracy']}")
 
     # 4. 价值残差 + 信号
     date = datetime.now().date().isoformat()
@@ -85,9 +91,9 @@ def run_pipeline(n_matches: int = 24, n_posts: int = 80, backtest: bool = True):
     profiles = [dict(r) for r in repo.get_player_profiles(conn)]
     map_winrate = [dict(r) for r in repo.get_team_map_winrate(conn)]
     report_path = render_report(date, signals, portfolio, bt, db_summary,
-                                profiles=profiles, map_winrate=map_winrate)
+                                profiles=profiles, map_winrate=map_winrate, calibration=calib)
     dash_path = build_dashboard(signals, portfolio, bt, db_summary,
-                                profiles=profiles, map_winrate=map_winrate)
+                                profiles=profiles, map_winrate=map_winrate, calibration=calib)
     print(f"[8/8] 报告: {report_path}")
     print(f"      仪表盘: {dash_path}")
     conn.close()

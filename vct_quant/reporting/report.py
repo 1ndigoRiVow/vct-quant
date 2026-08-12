@@ -14,9 +14,10 @@ from .. import config
 def render_report(date: str, signals: list[dict], portfolio: dict,
                   backtest: dict, db_summary: dict, out_path: Path | None = None,
                   profiles: list[dict] | None = None,
-                  map_winrate: list[dict] | None = None) -> Path:
+                  map_winrate: list[dict] | None = None,
+                  calibration: dict | None = None) -> Path:
     html = _build_html(date, signals, portfolio, backtest, db_summary,
-                       profiles or [], map_winrate or [])
+                       profiles or [], map_winrate or [], calibration)
     out = out_path or (Path(config.REPORT_DIR) / f"signal_report_{date}.html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
@@ -82,8 +83,31 @@ def _mapwr_rows(map_winrate: list[dict]) -> str:
     return "\n".join(out)
 
 
+def _calib_rows(calibration: dict | None) -> str:
+    if not calibration or not calibration.get("details"):
+        return '<tr><td colspan="6" style="text-align:center;color:#94a3b8">暂无校准数据</td></tr>'
+    out = []
+    for d in calibration["details"]:
+        hit = d.get("hit")
+        mark = ('<span style="color:#0d9488;font-weight:600">✓ 命中</span>' if hit
+                else '<span style="color:#dc2626;font-weight:600">✗ 未中</span>')
+        p = d["p_win_a"]
+        pred = d["team_a"] if p > 0.5 else d["team_b"]
+        out.append(
+            f"<tr>"
+            f'<td style="font-weight:600">{d["team_a"]} vs {d["team_b"]}</td>'
+            f'<td>{d["map"]}</td>'
+            f'<td style="font-weight:600">{p:.1%}</td>'
+            f'<td>{pred}</td>'
+            f'<td>{d["actual_winner"]}</td>'
+            f'<td>{mark}</td>'
+            f"</tr>"
+        )
+    return "\n".join(out)
+
+
 def _build_html(date, signals, portfolio, backtest, db_summary,
-                profiles=None, map_winrate=None) -> str:
+                profiles=None, map_winrate=None, calibration=None) -> str:
     profiles = profiles or []
     map_winrate = map_winrate or []
     gen = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -122,6 +146,14 @@ def _build_html(date, signals, portfolio, backtest, db_summary,
 
     profile_html = _profile_rows(profiles)
     mapwr_html = _mapwr_rows(map_winrate)
+    calib_html = _calib_rows(calibration)
+    cal_n = (calibration or {}).get("n_matches", 0)
+    _b = (calibration or {}).get("brier")
+    _l = (calibration or {}).get("logloss")
+    _a = (calibration or {}).get("accuracy")
+    cal_brier = f"{_b:.3f}" if isinstance(_b, (int, float)) else "—"
+    cal_logloss = f"{_l:.3f}" if isinstance(_l, (int, float)) else "—"
+    cal_acc = f"{_a:.1%}" if isinstance(_a, (int, float)) else "—"
 
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -194,6 +226,19 @@ def _build_html(date, signals, portfolio, backtest, db_summary,
     <thead><tr><th>战队</th><th>地图</th><th>对手</th><th>胜率</th><th>胜负</th><th>回合得失</th><th>场次</th></tr></thead>
     <tbody>{mapwr_html}</tbody>
   </table>
+
+  <h2>比赛模拟器 · 赛前胜率预测 p̂ 校准（FPS 回合制蒙特卡洛）</h2>
+  <div class="grid">
+    <div class="card"><div class="k">校准样本</div><div class="v">{cal_n}</div></div>
+    <div class="card"><div class="k">Brier 分数</div><div class="v">{cal_brier}</div></div>
+    <div class="card"><div class="k">Log-Loss</div><div class="v">{cal_logloss}</div></div>
+    <div class="card"><div class="k">胜负命中率</div><div class="v">{cal_acc}</div></div>
+  </div>
+  <table>
+    <thead><tr><th>对阵</th><th>地图</th><th>预测A胜率 p̂</th><th>预测胜者</th><th>实际胜者</th><th>命中</th></tr></thead>
+    <tbody>{calib_html}</tbody>
+  </table>
+  <div class="sub">p̂ 由蒙特卡洛模拟器输出：队伍实力（Glicko-2 均值 + 地图胜率修正）→ 单回合胜率 → 13 胜制逐回合模拟。注：此处用全量评分预测历史，含前视偏差，仅验证模拟器区分强弱的能力；out-of-sample 校准留待真实数据 walk-forward。</div>
 
   <footer>本报告由 vct_quant 自动生成。V*=Glicko-2 真实评分；P=情绪定价市场估值；Δ=P−V*。买入(看涨)=红、卖出(看跌)=绿，遵循 A 股惯例。选手画像与地图胜率来自比赛统计聚合。</footer>
 </body></html>"""
