@@ -21,6 +21,10 @@ VLR_BASE = "https://www.vlr.gg"
 HAOJIAO_BASE = "https://web.haojiao.cc"
 HUPU_BASE = "https://bbs.hupu.com"
 TIEBA_BASE = "https://tieba.baidu.com"
+BILIBILI_BASE = "https://search.bilibili.com"
+
+# Manual Hupu post-match ratings import. Keep account login/cookies out of code.
+HUPU_RATINGS_CSV = RAW_DIR / "hupu_ratings.csv"
 
 # VCT CN 赛区 event id（vlr.gg 上的赛季索引，占位，实际需核对当前赛季）
 VCT_CN_EVENT_IDS = ["1388", "1905"]

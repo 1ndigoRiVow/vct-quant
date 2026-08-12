@@ -29,6 +29,25 @@ TEAMS = {
 MAPS = ["Bind", "Haven", "Split", "Lotus", "Pearl", "Ascent", "Sunset"]
 AGENTS = ["Jett", "Raze", "Reyna", "Omen", "Chamber", "Killjoy", "Sage", "Sova", "Skye", "Cypher"]
 
+# 特工 → 常用位置（VCT 四类：duelist 决斗 / initiator 先锋 / controller 控场 / sentinel 哨卫）
+AGENT_ROLES = {
+    # 决斗
+    "Jett": "duelist", "Raze": "duelist", "Reyna": "duelist", "Phoenix": "duelist",
+    "Neon": "duelist", "Yoru": "duelist", "Iso": "duelist", "Waylay": "duelist",
+    # 先锋
+    "Sova": "initiator", "Skye": "initiator", "KAY/O": "initiator", "Breach": "initiator",
+    "Fade": "initiator", "Gekko": "initiator", "Tejo": "initiator",
+    # 控场
+    "Omen": "controller", "Brimstone": "controller", "Viper": "controller",
+    "Astra": "controller", "Harbor": "controller", "Clove": "controller",
+    # 哨卫
+    "Cypher": "sentinel", "Killjoy": "sentinel", "Sage": "sentinel",
+    "Chamber": "sentinel", "Deadlock": "sentinel", "Vyse": "sentinel",
+}
+ROLE_CN = {"duelist": "决斗", "initiator": "先锋", "controller": "控场", "sentinel": "哨卫"}
+
+DEFAULT_TOTAL_ROUNDS = 24  # 常规图 13-11；真实解析拿不到比分时的兜底
+
 
 class VLRCollector:
     """VLR 比赛硬数据采集器。"""
@@ -109,12 +128,22 @@ class VLRCollector:
         stats: dict[str, list[dict]] = {}
         for idx, mblock in enumerate(soup.select(".vm-stats-game")):
             mid = f"{match_id}_m{idx}"
+            # 尽力解析该图比分（vlr 结构可能变动，拿不到用默认回合数兜底）
+            map_scores = [
+                s.get_text(strip=True)
+                for s in mblock.select(".vm-stats-game-header .score")
+            ]
+            sa = sb = 0
+            if len(map_scores) >= 2:
+                sa = int(map_scores[0]) if map_scores[0].isdigit() else 0
+                sb = int(map_scores[1]) if map_scores[1].isdigit() else 0
+            total_rounds = (sa + sb) if (sa + sb) > 0 else DEFAULT_TOTAL_ROUNDS
             mp = {
                 "id": mid,
                 "match_id": match_id,
                 "map_name": MAPS[idx % len(MAPS)],
-                "team_a_score": 13,
-                "team_b_score": 11,
+                "team_a_score": sa or 13,
+                "team_b_score": sb or 11,
                 "winner": team_a,
                 "duration_sec": 2400,
                 "site": "vlr.gg",
@@ -126,14 +155,14 @@ class VLRCollector:
                 if len(cells) < 6:
                     continue
                 try:
-                    row_stats.append(self._row_to_stat(mid, match_id, cells, team_a))
+                    row_stats.append(self._row_to_stat(mid, match_id, cells, team_a, total_rounds))
                 except Exception:  # noqa: BLE001
                     continue
             stats[mid] = row_stats
         return {"match": match, "maps": maps, "stats": stats}
 
     @staticmethod
-    def _row_to_stat(map_id, match_id, cells, default_team) -> dict:
+    def _row_to_stat(map_id, match_id, cells, default_team, total_rounds=DEFAULT_TOTAL_ROUNDS) -> dict:
         def _f(i, cast=float, d=0.0):
             return cast(cells[i]) if i < len(cells) and cells[i] else d
         return {
@@ -151,6 +180,7 @@ class VLRCollector:
             "fd": int(_f(8, float, 0)),
             "adr": _f(9),
             "hs_pct": _f(10),
+            "rounds": total_rounds,
         }
 
     # ---------- 离线合成 ----------
@@ -187,7 +217,8 @@ class VLRCollector:
                     "site": "vlr.gg",
                 }
                 maps.append(mp)
-                stats[mid] = self._synthetic_player_stats(rng, mid, f"m{i}", ta, tb)
+                stats[mid] = self._synthetic_player_stats(rng, mid, f"m{i}", ta, tb,
+                                                          a_rounds=a_rounds, b_rounds=b_rounds)
             out.append({
                 "match": {
                     "id": f"m{i}",
@@ -205,8 +236,10 @@ class VLRCollector:
         return out
 
     @staticmethod
-    def _synthetic_player_stats(rng, map_id, match_id, ta, tb) -> list[dict]:
+    def _synthetic_player_stats(rng, map_id, match_id, ta, tb,
+                                a_rounds: int = 13, b_rounds: int = 11) -> list[dict]:
         rows = []
+        total_rounds = a_rounds + b_rounds
         for team in (ta, tb):
             for pname in TEAMS[team]:
                 star = rng.random() < 0.25  # 明星选手高表现
@@ -226,5 +259,6 @@ class VLRCollector:
                     "fd": rng.randint(-4, 4),
                     "adr": round(rng.uniform(90, 180), 1),
                     "hs_pct": round(rng.uniform(18, 38), 1),
+                    "rounds": total_rounds,
                 })
         return rows

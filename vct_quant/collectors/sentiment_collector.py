@@ -1,13 +1,15 @@
-"""vct_quant.collectors.sentiment_collector — 虎扑/百度贴吧舆情文本采集。
+"""vct_quant.collectors.sentiment_collector — 百度贴吧/B站舆情文本采集。
 
-- 真实模式：抓取虎扑话题区与贴吧搜索结果帖/回复。
+- 真实模式：抓取百度贴吧搜索结果帖/回复与 B 站公开视频标题/摘要。
 - 离线模式（默认）：合成带情绪、黑话、反讽的社区文本，供 BERT+LLM 管线演练。
 """
 from __future__ import annotations
 
 import random
+import re
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import quote_plus
 
 from .. import config
 from ..collectors.vlr_collector import TEAMS
@@ -39,7 +41,12 @@ NEUTRAL_TEMPLATES = [
 
 
 class HupuTiebaCollector:
-    """虎扑 + 百度贴吧舆情采集器。"""
+    """贴吧 + B站公开舆情采集器。
+
+    Class name is kept for compatibility with the existing pipeline. The real
+    collector no longer logs in to Hupu or scrapes Hupu comments; Hupu ratings
+    should be manually imported through ManualHupuRatingsImporter.
+    """
 
     def __init__(self, offline: bool | None = None):
         self.offline = config.OFFLINE_MODE if offline is None else offline
@@ -57,31 +64,50 @@ class HupuTiebaCollector:
     # ---------- 真实抓取 ----------
     def _fetch_real_posts(self, n_posts: int) -> list[dict]:
         posts: list[dict] = []
-        posts += self._fetch_hupu(n_posts // 2)
+        posts += self._fetch_bilibili(n_posts // 2)
         posts += self._fetch_tieba(n_posts - len(posts))
         return posts[:n_posts]
 
     def _fetch_hupu(self, n: int) -> list[dict]:
-        # 虎扑话题区列表（结构需现场校验）
-        url = f"{config.HUPU_BASE}/vct"  # 占位板块
+        print("[hupu] skipped: use manual_hupu_ratings_importer for scores; comments are not scraped")
+        return []
+
+    def _fetch_bilibili(self, n: int) -> list[dict]:
+        query = quote_plus("VCT CN 无畏契约")
+        url = f"{config.BILIBILI_BASE}/all?keyword={query}"
         try:
             html = net.fetch_html(url)
         except Exception as e:  # noqa: BLE001
-            print(f"[hupu] fetch failed: {e}")
+            print(f"[bilibili] fetch failed: {e}")
             return []
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html, "html.parser")
         out = []
-        for a in soup.select("a[href*='/thread']")[:n]:
-            out.append({
-                "id": str(uuid.uuid4()),
-                "source": "hupu",
-                "thread_id": a.get("href", ""),
-                "author": "",
-                "content": a.get_text(strip=True),
-                "post_time": datetime.now().isoformat(timespec="seconds"),
-                "reply_count": 0,
-            })
+        seen = set()
+        selectors = [
+            "a[href*='video/BV']",
+            ".bili-video-card__info--tit a",
+            ".video-item a.title",
+        ]
+        for sel in selectors:
+            for item in soup.select(sel):
+                title = item.get("title") or item.get_text(" ", strip=True)
+                content = re.sub(r"\s+", " ", title or "").strip()
+                href = item.get("href", "")
+                if not content or href in seen:
+                    continue
+                seen.add(href)
+                out.append({
+                    "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"bilibili|{href}|{content}")),
+                    "source": "bilibili",
+                    "thread_id": href,
+                    "author": "",
+                    "content": content,
+                    "post_time": datetime.now().isoformat(timespec="seconds"),
+                    "reply_count": 0,
+                })
+                if len(out) >= n:
+                    return out
         return out
 
     def _fetch_tieba(self, n: int) -> list[dict]:
@@ -95,12 +121,14 @@ class HupuTiebaCollector:
         soup = BeautifulSoup(html, "html.parser")
         out = []
         for item in soup.select("a.j_th_tit, .threadlist_title a")[:n]:
+            href = item.get("href", "")
+            content = item.get_text(" ", strip=True)
             out.append({
-                "id": str(uuid.uuid4()),
+                "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"tieba|{href}|{content}")),
                 "source": "tieba",
-                "thread_id": item.get("href", ""),
+                "thread_id": href,
                 "author": "",
-                "content": item.get_text(strip=True),
+                "content": content,
                 "post_time": datetime.now().isoformat(timespec="seconds"),
                 "reply_count": 0,
             })

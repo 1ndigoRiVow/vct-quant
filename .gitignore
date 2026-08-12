@@ -31,3 +31,6 @@ data/parquet/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local runtime database directory (generated at runtime, never commit)
+vct_quant/data/

@@ -8,12 +8,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from . import config
+from .collectors.manual_hupu_ratings_importer import ManualHupuRatingsImporter
 from .collectors.scheduler import Scheduler
 from .collectors.sentiment_collector import HupuTiebaCollector
 from .collectors.vlr_collector import VLRCollector
 from .features.sentiment_features import SentimentPipeline, player_sentiment_features
 from .models.backtest import walk_forward
 from .models.glicko2 import rate_all_players
+from .models.player_profile import build_all as build_player_data
 from .models.value_model import build_all_values
 from .reporting.dashboard import build_dashboard
 from .reporting.report import render_report
@@ -29,7 +31,7 @@ def run_pipeline(n_matches: int = 24, n_posts: int = 80, backtest: bool = True):
     print("[1/8] 初始化数据库完成")
 
     # 1. 采集
-    sched = Scheduler(conn).add(VLRCollector()).add(HupuTiebaCollector())
+    sched = Scheduler(conn).add(VLRCollector()).add(ManualHupuRatingsImporter()).add(HupuTiebaCollector())
     summary = sched.run(n_matches=n_matches, n_posts=n_posts)
     print(f"[2/8] 采集完成: {summary['results']}")
 
@@ -41,6 +43,11 @@ def run_pipeline(n_matches: int = 24, n_posts: int = 80, backtest: bool = True):
     # 3. Glicko-2 评分
     ratings = rate_all_players(conn)
     print(f"[4/8] Glicko-2 评分完成，覆盖 {len(ratings)} 名选手")
+
+    # 3.5 选手多维画像 + 选手-战队映射 + 战队地图胜率
+    pdata = build_player_data(conn)
+    print(f"[4.5/8] 选手画像 {pdata['profiles']} 名 | 战队映射 {pdata['player_teams']} | "
+          f"地图胜率 {pdata['team_map_winrate']} 条")
 
     # 4. 价值残差 + 信号
     date = datetime.now().date().isoformat()
@@ -70,9 +77,17 @@ def run_pipeline(n_matches: int = 24, n_posts: int = 80, backtest: bool = True):
         "player_stats": repo.count_rows(conn, "player_stats"),
         "posts": repo.count_rows(conn, "posts"),
         "sentiments": repo.count_rows(conn, "sentiments"),
+        "hupu_match_ratings": repo.count_rows(conn, "hupu_match_ratings"),
+        "player_profiles": repo.count_rows(conn, "player_profiles"),
+        "player_teams": repo.count_rows(conn, "player_teams"),
+        "team_map_winrate": repo.count_rows(conn, "team_map_winrate"),
     }
-    report_path = render_report(date, signals, portfolio, bt, db_summary)
-    dash_path = build_dashboard(signals, portfolio, bt, db_summary)
+    profiles = [dict(r) for r in repo.get_player_profiles(conn)]
+    map_winrate = [dict(r) for r in repo.get_team_map_winrate(conn)]
+    report_path = render_report(date, signals, portfolio, bt, db_summary,
+                                profiles=profiles, map_winrate=map_winrate)
+    dash_path = build_dashboard(signals, portfolio, bt, db_summary,
+                                profiles=profiles, map_winrate=map_winrate)
     print(f"[8/8] 报告: {report_path}")
     print(f"      仪表盘: {dash_path}")
     conn.close()

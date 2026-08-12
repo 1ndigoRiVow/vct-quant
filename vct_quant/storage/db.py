@@ -25,10 +25,18 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
         conn = connect()
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         if own:
             conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """轻量迁移：旧库补充新增列，保证 CREATE TABLE IF NOT EXISTS 覆盖不到的场景。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(player_stats)").fetchall()}
+    if "rounds" not in cols:
+        conn.execute("ALTER TABLE player_stats ADD COLUMN rounds INTEGER DEFAULT 0")
 
 
 @contextmanager

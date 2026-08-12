@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -11,8 +12,11 @@ from .. import config
 
 
 def render_report(date: str, signals: list[dict], portfolio: dict,
-                  backtest: dict, db_summary: dict, out_path: Path | None = None) -> Path:
-    html = _build_html(date, signals, portfolio, backtest, db_summary)
+                  backtest: dict, db_summary: dict, out_path: Path | None = None,
+                  profiles: list[dict] | None = None,
+                  map_winrate: list[dict] | None = None) -> Path:
+    html = _build_html(date, signals, portfolio, backtest, db_summary,
+                       profiles or [], map_winrate or [])
     out = out_path or (Path(config.REPORT_DIR) / f"signal_report_{date}.html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
@@ -25,7 +29,63 @@ def _badge(sig: str) -> str:
     return f'<span style="{style[sig]} padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600">{label[sig]}</span>'
 
 
-def _build_html(date, signals, portfolio, backtest, db_summary) -> str:
+ROLE_CN = {"duelist": "决斗", "initiator": "先锋", "controller": "控场", "sentinel": "哨卫", "unknown": "未知"}
+
+
+def _profile_rows(profiles: list[dict]) -> str:
+    if not profiles:
+        return '<tr><td colspan="9" style="text-align:center;color:#94a3b8">暂无画像数据</td></tr>'
+    out = []
+    for p in profiles:
+        try:
+            top = json.loads(p["top_agents"])
+        except Exception:  # noqa: BLE001
+            top = []
+        agents = " / ".join(
+            f'{a["agent"]}<span style="color:#94a3b8">({a.get("role_cn","")})</span>'
+            for a in top[:3]
+        ) or "—"
+        out.append(
+            f"<tr>"
+            f'<td style="font-weight:600">{p["player_name"]}</td>'
+            f'<td>{p["team"]}</td>'
+            f'<td>{ROLE_CN.get(p["main_role"], p["main_role"])}</td>'
+            f'<td style="font-size:11px">{agents}</td>'
+            f'<td>{p["total_rounds"]}</td>'
+            f'<td>{p["kda"]}</td>'
+            f'<td>{p["adr"]}</td>'
+            f'<td>{p["acs"]}</td>'
+            f'<td>{p["fk"]} / {p["fd"]}</td>'
+            f"</tr>"
+        )
+    return "\n".join(out)
+
+
+def _mapwr_rows(map_winrate: list[dict]) -> str:
+    if not map_winrate:
+        return '<tr><td colspan="7" style="text-align:center;color:#94a3b8">暂无地图胜率数据</td></tr>'
+    out = []
+    for r in map_winrate:
+        wr = r["win_rate"] or 0
+        color = "#dc2626" if wr >= 0.5 else "#64748b"
+        out.append(
+            f"<tr>"
+            f'<td style="font-weight:600">{r["team"]}</td>'
+            f'<td>{r["map_name"]}</td>'
+            f'<td>{r["opponent"]}</td>'
+            f'<td style="font-weight:600;color:{color}">{wr:.1%}</td>'
+            f'<td>{r["wins"]}W-{r["losses"]}L</td>'
+            f'<td>{r["rounds_won"]}:{r["rounds_lost"]}</td>'
+            f'<td>{r["n_maps"]}</td>'
+            f"</tr>"
+        )
+    return "\n".join(out)
+
+
+def _build_html(date, signals, portfolio, backtest, db_summary,
+                profiles=None, map_winrate=None) -> str:
+    profiles = profiles or []
+    map_winrate = map_winrate or []
     gen = datetime.now().strftime("%Y-%m-%d %H:%M")
     rows = []
     for s in signals:
@@ -59,6 +119,9 @@ def _build_html(date, signals, portfolio, backtest, db_summary) -> str:
     pockets = [s for s in signals if s["signal"] == "BUY"][:3]
     bubble_html = "<br>".join(f'{b["player_name"]} (Δ={b["delta"]:+.0f})' for b in bubbles) or "无"
     pocket_html = "<br>".join(f'{b["player_name"]} (Δ={b["delta"]:+.0f})' for b in pockets) or "无"
+
+    profile_html = _profile_rows(profiles)
+    mapwr_html = _mapwr_rows(map_winrate)
 
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -120,5 +183,17 @@ def _build_html(date, signals, portfolio, backtest, db_summary) -> str:
     <tbody>{rows_html}</tbody>
   </table>
 
-  <footer>本报告由 vct_quant 自动生成。V*=Glicko-2 真实评分；P=情绪定价市场估值；Δ=P−V*。买入(看涨)=红、卖出(看跌)=绿，遵循 A 股惯例。</footer>
+  <h2>选手能力画像（多维模型：特工回合 / KDA / ADR / ACS / 首杀首死）</h2>
+  <table>
+    <thead><tr><th>选手</th><th>战队</th><th>常用位置</th><th>特工池(位置)</th><th>总回合</th><th>KDA</th><th>ADR</th><th>ACS</th><th>FK/FD</th></tr></thead>
+    <tbody>{profile_html}</tbody>
+  </table>
+
+  <h2>战队地图胜率（按 地图 × 对手）</h2>
+  <table>
+    <thead><tr><th>战队</th><th>地图</th><th>对手</th><th>胜率</th><th>胜负</th><th>回合得失</th><th>场次</th></tr></thead>
+    <tbody>{mapwr_html}</tbody>
+  </table>
+
+  <footer>本报告由 vct_quant 自动生成。V*=Glicko-2 真实评分；P=情绪定价市场估值；Δ=P−V*。买入(看涨)=红、卖出(看跌)=绿，遵循 A 股惯例。选手画像与地图胜率来自比赛统计聚合。</footer>
 </body></html>"""

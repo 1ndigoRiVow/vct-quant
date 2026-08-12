@@ -12,7 +12,11 @@ from .. import config
 
 
 def build_dashboard(signals: list[dict], portfolio: dict, backtest: dict,
-                     db_summary: dict, out_path: Path | None = None) -> Path:
+                     db_summary: dict, out_path: Path | None = None,
+                     profiles: list[dict] | None = None,
+                     map_winrate: list[dict] | None = None) -> Path:
+    profiles = profiles or []
+    map_winrate = map_winrate or []
     n_signals = len(signals)
     points = [
         {"x": s["v_star"], "y": s["p_market"], "r": min(14, 4 + abs(s["delta"]) / 20),
@@ -21,15 +25,46 @@ def build_dashboard(signals: list[dict], portfolio: dict, backtest: dict,
     ]
     data = json.dumps(points, ensure_ascii=False)
     bars = json.dumps([{"player": s["player_name"], "delta": s["delta"], "signal": s["signal"]} for s in signals[:20]], ensure_ascii=False)
+
+    # 选手画像：位置分布 + 顶部 KDA/ACS 排行
+    role_counts: dict[str, int] = {}
+    for p in profiles:
+        role = p["main_role"] or "unknown"
+        role_counts[role] = role_counts.get(role, 0) + 1
+    role_data = json.dumps({
+        "labels": [ROLE_CN.get(r, r) for r in role_counts],
+        "values": list(role_counts.values()),
+    }, ensure_ascii=False)
+    top_perf = json.dumps([
+        {"player": p["player_name"], "role": ROLE_CN.get(p["main_role"], p["main_role"]),
+         "acs": p["acs"], "adr": p["adr"], "kda": p["kda"]}
+        for p in sorted(profiles, key=lambda x: x["acs"], reverse=True)[:15]
+    ], ensure_ascii=False)
+
+    # 战队地图胜率：按胜率取前 20 条
+    mw = sorted(map_winrate, key=lambda x: (x["win_rate"] or 0), reverse=True)[:20]
+    mapwr_data = json.dumps([
+        {"label": f'{r["team"]}·{r["map_name"]}·vs{r["opponent"]}', "wr": r["win_rate"] or 0}
+        for r in mw
+    ], ensure_ascii=False)
+
     gen = datetime.now().strftime("%Y-%m-%d %H:%M")
-    html = _html(data, bars, n_signals, portfolio, backtest, db_summary, gen)
+    html = _html(data, bars, n_signals, portfolio, backtest, db_summary, gen,
+                 role_data, top_perf, mapwr_data)
     out = out_path or (Path(config.REPORT_DIR) / "dashboard.html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
     return out
 
 
-def _html(points, bars, n_signals, portfolio, backtest, db_summary, gen) -> str:
+ROLE_CN = {"duelist": "决斗", "initiator": "先锋", "controller": "控场", "sentinel": "哨卫", "unknown": "未知"}
+
+
+def _html(points, bars, n_signals, portfolio, backtest, db_summary, gen,
+          role_data=None, top_perf=None, mapwr_data=None) -> str:
+    role_data = role_data or '{"labels":[],"values":[]}'
+    top_perf = top_perf or "[]"
+    mapwr_data = mapwr_data or "[]"
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -61,10 +96,18 @@ def _html(points, bars, n_signals, portfolio, backtest, db_summary, gen) -> str:
     <div class="panel"><div class="sub">V* vs P（对角线=均衡，上方=泡沫，下方=洼地）</div><canvas id="scatter"></canvas></div>
     <div class="panel"><div class="sub">残差 Δ（红=买入洼地，绿=卖出泡沫）</div><canvas id="bars"></canvas></div>
   </div>
+  <div class="row">
+    <div class="panel"><div class="sub">选手常用位置分布（先锋/决斗/控场/哨卫）</div><canvas id="roles"></canvas></div>
+    <div class="panel"><div class="sub">选手 ACS 排行（平均战斗评分 TOP15）</div><canvas id="perf"></canvas></div>
+  </div>
+  <div class="panel"><div class="sub">战队 × 地图 × 对手 胜率 TOP20</div><canvas id="mapwr"></canvas></div>
   <footer>买入(看涨)=红 / 卖出(看跌)=绿，遵循 A 股惯例。</footer>
   <script>
   const pts = {points};
   const bars = {bars};
+  const roleData = {role_data};
+  const perf = {top_perf};
+  const mapwr = {mapwr_data};
   Chart.defaults.color = '#475569';
   const scatter = new Chart(document.getElementById('scatter'), {{
     type:'bubble',
@@ -75,6 +118,21 @@ def _html(points, bars, n_signals, portfolio, backtest, db_summary, gen) -> str:
     type:'bar',
     data:{{labels:bars.map(b=>b.player),datasets:[{{label:'Δ',data:bars.map(b=>b.delta),backgroundColor:bars.map(b=>b.signal==='BUY'?'#dc2626':b.signal==='SELL'?'#16a34a':'#94a3b8')}}]}},
     options:{{indexAxis:'y',plugins:{{legend:{{display:false}}}},scales:{{x:{{title:{{display:true,text:'残差 Δ=P−V*'}}}}}}}}
+  }});
+  new Chart(document.getElementById('roles'), {{
+    type:'doughnut',
+    data:{{labels:roleData.labels,datasets:[{{data:roleData.values,backgroundColor:['#dc2626','#3b82f6','#7c3aed','#0d9488','#94a3b8']}}]}},
+    options:{{plugins:{{legend:{{position:'bottom'}}}}}}
+  }});
+  new Chart(document.getElementById('perf'), {{
+    type:'bar',
+    data:{{labels:perf.map(p=>p.player+'('+p.role+')'),datasets:[{{label:'ACS',data:perf.map(p=>p.acs),backgroundColor:'#3b82f6'}}]}},
+    options:{{indexAxis:'y',plugins:{{legend:{{display:false}}}},scales:{{x:{{title:{{display:true,text:'ACS'}}}}}}}}
+  }});
+  new Chart(document.getElementById('mapwr'), {{
+    type:'bar',
+    data:{{labels:mapwr.map(m=>m.label),datasets:[{{label:'胜率',data:mapwr.map(m=>m.wr),backgroundColor:mapwr.map(m=>m.wr>=0.5?'#dc2626':'#94a3b8')}}]}},
+    options:{{indexAxis:'y',plugins:{{legend:{{display:false}}}},scales:{{x:{{min:0,max:1,title:{{display:true,text:'胜率'}}}}}}}}
   }});
   </script>
 </body></html>"""
