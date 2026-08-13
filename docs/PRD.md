@@ -156,9 +156,9 @@
 | 选手-战队映射 | ✅ 已实现 | `player_teams`（近 5 场推断） |
 | 战队地图胜率 | ✅ 已实现 | `team_map_winrate`（team×map×opponent） |
 | FPS 蒙特卡洛模拟器（p̂） | ✅ 已实现 | `match_simulator.py`；校准 Brier/LogLoss/命中率 |
-| 第二层人气模型（E[ΔP]） | ⏳ Phase 2 | 反应函数回归/LightGBM，待真实数据 |
+| 评分层 E[ΔRating]（辅助 15%） | ⏳ Phase 2 | 反应函数回归/LightGBM，表现层前瞻为主，待真实数据 |
 | 真实数据接入（OFFLINE_MODE=False） | ⏳ 阻塞于网络/凭据 | 需本机可联网 + 虎扑 Cookie |
-| 信号整合 + walk-forward 回测 | ⏳ Phase 3 | 用 E[P′] 替代/增强现有静态 Δ |
+| 信号整合 + walk-forward 回测 | ⏳ Phase 3 | 用 0.80·Perf+0.15·Rating+0.05·Map 复合信号替代静态 Δ |
 | 定时调度 | ⏳ 待定 | 每日自动采集→预测→日报 |
 
 ---
