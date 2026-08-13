@@ -249,7 +249,7 @@
 3. **信号执行边界**：是否接真实"交易"？合规与资金风险如何隔离？（当前定为信号+建议，不接资金）
 4. **跨赛事泛化**：样本不足时是否引入 VCT 国际赛 / 其他赛区做迁移学习？
 5. **叙事模板（VCT 版）**：esports-manager 的 narration 模块是否本期移植，用于生成"盘面点评"喂情绪因子？
-6. **定价公式代码化（代码债）**：当前 `value_model.py` 的 `SENTIMENT_PRICING_ALPHA/BETA` 把 P 直接由情绪映射，与 80/15/5 规则冲突，需改为 `0.80·Perf + 0.15·Rating + 0.05·Map` 复合定价（Perf 由 V\*/p̂ 推导）。
+6. **定价公式代码化**（✅ 已解决，2026-08-13）：`value_model.py` 已落地 `composite_price` —— `P = V* + 0.15·Rating_dev + 0.05·Map_dev`（等价 `0.80·Perf + 0.15·Rating + 0.05·Map`，Rating/Map 以 V* 为中性锚）。`SENTIMENT_PRICING_ALPHA/BETA` 已拆除，旧 `market_price` 改为 `rating_deviation`（纯情绪偏离，去掉 form 项）。`SIGNAL_THETA` 随新 Δ 量级重标定至 15.0。
 
 ---
 

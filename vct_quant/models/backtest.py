@@ -12,7 +12,7 @@ from ..features.match_features import player_match_features
 from ..features.sentiment_features import player_sentiment_features
 from ..features.fusion import classify_delta
 from ..models.glicko2 import rate_all_players
-from ..models.sentiment_pricing import market_price
+from ..models.value_model import composite_price
 
 
 def walk_forward(conn) -> dict:
@@ -44,7 +44,7 @@ def walk_forward(conn) -> dict:
             if not mf:
                 continue
             v_star = ratings.get(p, {}).get("rating", 1500.0)
-            p_market = market_price(sf, mf)
+            p_market = composite_price(conn, p, v_star, sf, mf)["p_market"]
             delta = p_market - v_star
             label, _ = classify_delta(delta)
             if label == "均衡":

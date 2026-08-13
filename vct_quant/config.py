@@ -48,13 +48,27 @@ GLICKO2_DEFAULT_RATING = 1500.0
 GLICKO2_DEFAULT_RD = 350.0
 GLICKO2_DEFAULT_VOL = 0.06
 
-# 情绪定价：把情绪因子映射为市场隐含估值 P
-#   P = base + alpha * sentiment_index + beta * hype_index
-SENTIMENT_PRICING_ALPHA = 200.0
-SENTIMENT_PRICING_BETA = 150.0
+# === 复合定价：股价 P = 0.80·表现层(Perf) + 0.15·评分层(Rating) + 0.05·地图层(Map) ===
+# 表现层(80%) = V*(Glicko-2 客观实力)，作为定价锚（不贡献 Δ）；
+# 评分层(15%) = 虎扑JR评分/舆情情绪溢价，相对 V* 的偏离；
+# 地图层(5%)  = 战队地图胜率相对 50% 基线的边际修正，相对 V* 的偏离。
+# 等价实现：P = V* + 0.15·Rating_dev + 0.05·Map_dev（Rating/Map 以 V* 为中性锚，中性时 Δ=0）。
+PRICING_PERF_WEIGHT = 0.80
+PRICING_RATING_WEIGHT = 0.15
+PRICING_MAP_WEIGHT = 0.05
+
+# 评分层(15%)：情绪 → 相对 V* 的偏离（中性=0）；形变(form)属表现层，不在此层。
+RATING_PRICING_ALPHA = 200.0    # sentiment_index(-1..1) 系数
+RATING_PRICING_BETA = 150.0     # hype_index(0..1) 系数
+RATING_PRICING_BULL = 80.0      # (bullish_ratio - 0.5) 系数
+
+# 地图层(5%)：战队地图胜率 → 相对 V* 的偏离
+MAP_PRICING_SCALE = 200.0       # (avg_win_rate - 0.5) * scale → 偏离（仅在 5% 权重内生效）
 
 # === 策略阈值 ===
-SIGNAL_THETA = 120.0
+# 注：复合定价下 Δ = 0.15·评分层偏离 + 0.05·地图层偏离，典型 |Δ|<30（std≈16.6）。
+# 阈值按新量级重标定（≈1 个标准差），仅显著的情绪/地图偏离触发交易信号。
+SIGNAL_THETA = 15.0
 MOMENTUM_CONFIRM_DAYS = 3
 MAX_POSITION_PCT = 0.15
 MAX_DRAWDOWN_PCT = 0.20

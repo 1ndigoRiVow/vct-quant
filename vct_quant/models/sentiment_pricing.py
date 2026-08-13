@@ -1,30 +1,28 @@
-"""vct_quant.models.sentiment_pricing — 情绪因子 → 市场隐含估值 P。
+"""vct_quant.models.sentiment_pricing — 评分层(15%)：虎扑JR评分/舆情 → 相对 V* 的情绪偏离。
 
-P = 1500 + alpha * sentiment_index + beta * hype_index + gamma * form
-把社区情绪与热度映射到与 V* 同一评分尺度，便于计算残差 Δ = P − V*。
+旧版把情绪直接映射成市场价 P（100% 权重）。新复合定价下，情绪只占总价 15%，
+且作为"相对内在价值 V* 的溢价/折价"存在（中性=0），不再自带 1500 基准——
+基准由表现层 V* 统一提供，避免双重基准导致的系统性偏移。
+形变(form_momentum)属客观表现层，不计入此评分层。
 """
 from __future__ import annotations
 
 from .. import config
 
 
-def market_price(sentiment_features: dict | None, match_features: dict | None = None) -> float:
+def rating_deviation(sentiment_features: dict | None, match_features: dict | None = None) -> float:
+    """相对 V* 的情绪溢价/折价；无舆情 → 0（中性，不贡献 Δ）。
+
+    返回的是"偏离量"（与 V* 同尺度），由调用方乘以 0.15 权重后并入股价。
+    """
     if not sentiment_features:
-        # 无舆情则市场价 ≈ 中性基准，靠比赛状态小幅修正
-        base = 1500.0
-        if match_features:
-            base += 30 * match_features.get("form_momentum", 0) / 10
-        return round(base, 2)
-    s_idx = sentiment_features["sentiment_mean"]            # -1..1
-    hype = sentiment_features["hype_index"]                 # 0..1
-    bull = sentiment_features["bullish_ratio"]              # 0..1
-    base = 1500.0
-    p = (
-        base
-        + config.SENTIMENT_PRICING_ALPHA * s_idx
-        + config.SENTIMENT_PRICING_BETA * hype
-        + 80.0 * (bull - 0.5)
+        return 0.0
+    s_idx = sentiment_features["sentiment_mean"]   # -1..1
+    hype = sentiment_features["hype_index"]         # 0..1
+    bull = sentiment_features["bullish_ratio"]      # 0..1
+    dev = (
+        config.RATING_PRICING_ALPHA * s_idx
+        + config.RATING_PRICING_BETA * hype
+        + config.RATING_PRICING_BULL * (bull - 0.5)
     )
-    if match_features:
-        p += 6.0 * match_features.get("form_momentum", 0)
-    return round(p, 2)
+    return round(dev, 2)
