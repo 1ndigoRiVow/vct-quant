@@ -1,0 +1,11 @@
+# 统一行尾为 LF，避免 Windows/跨机 checkout 换行符混乱
+* text=auto eol=lf
+
+# 文档与脚本显式 LF
+*.md text eol=lf
+*.py text eol=lf
+*.sql text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
